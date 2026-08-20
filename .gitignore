@@ -1,0 +1,14 @@
+# Python cache & temporary files
+__pycache__/
+*.py[cod]
+
+# Secret keys and local environment variables
+.env
+
+# Local SQLite databases
+*.db
+*.sqlite3
+
+# Virtual environments
+venv/
+.venv/
