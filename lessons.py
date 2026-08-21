@@ -1,154 +1,82 @@
-from typing import Optional
+from datetime import datetime, date
+from fastapi import APIRouter, HTTPException
+
+from models import UserProfile, LessonProgress, ChallengeProgress
+
+router = APIRouter(
+    prefix="/api/progress",
+    tags=["Progress"]
+)
 
 
-LESSONS = [
-    {
-        "id": "python_variables",
-        "language": "python",
-        "title": "Variables",
-        "description": "Learn how to store values using variables.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 1,
-        "locked": False
-    },
-    {
-        "id": "python_print",
-        "language": "python",
-        "title": "Print Statements",
-        "description": "Learn how to display information using print().",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 2,
-        "locked": False
-    },
-    {
-        "id": "python_datatypes",
-        "language": "python",
-        "title": "Data Types",
-        "description": "Learn about strings, integers, floats, booleans, and more.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 3,
-        "locked": False
-    },
-    {
-        "id": "python_if",
-        "language": "python",
-        "title": "If Statements",
-        "description": "Learn how programs make decisions using conditions.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 4,
-        "locked": False
-    },
-    {
-        "id": "python_for_loops",
-        "language": "python",
-        "title": "For Loops",
-        "description": "Learn how to repeat code using for loops.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 5,
-        "locked": False
-    },
-    {
-        "id": "luau_variables",
-        "language": "luau",
-        "title": "Luau Variables",
-        "description": "Learn how variables work in Luau.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 1,
-        "locked": False
-    },
-    {
-        "id": "luau_functions",
-        "language": "luau",
-        "title": "Luau Functions",
-        "description": "Learn how to create and use functions in Luau.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 2,
-        "locked": False
-    },
-    {
-        "id": "luau_if",
-        "language": "luau",
-        "title": "Luau If Statements",
-        "description": "Learn conditional logic in Luau.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 3,
-        "locked": False
-    },
-    {
-        "id": "luau_loops",
-        "language": "luau",
-        "title": "Luau Loops",
-        "description": "Learn how to repeat code using Luau loops.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 4,
-        "locked": False
-    },
-    {
-        "id": "luau_tables",
-        "language": "luau",
-        "title": "Luau Tables",
-        "description": "Learn how tables store collections of values in Luau.",
-        "difficulty": "Beginner",
-        "xp_reward": 100,
-        "orb_reward": 50,
-        "order": 5,
-        "locked": False
-    }
-]
+def calculate_level(xp: int) -> int:
+    return (xp // 100) + 1
 
 
-def get_all_lessons():
-    return LESSONS
+def add_xp(user: UserProfile, amount: int) -> UserProfile:
+    if amount < 0:
+        raise ValueError("XP amount cannot be negative")
+
+    user.xp += amount
+    user.level = calculate_level(user.xp)
+
+    return user
 
 
-def get_lesson_by_id(lesson_id: str) -> Optional[dict]:
-    for lesson in LESSONS:
-        if lesson["id"] == lesson_id:
-            return lesson
+def complete_lesson(
+    user: UserProfile,
+    lesson: LessonProgress,
+    xp_reward: int = 50
+) -> UserProfile:
 
-    return None
+    if not lesson.completed:
+        lesson.completed = True
+        lesson.completed_at = datetime.utcnow().isoformat()
+
+        if lesson.lesson_id not in user.completed_lessons:
+            user.completed_lessons.append(lesson.lesson_id)
+
+        add_xp(user, xp_reward)
+
+    return user
 
 
-def get_lessons_by_language(language: str):
-    language = language.lower()
+def complete_challenge(
+    user: UserProfile,
+    challenge: ChallengeProgress,
+    xp_reward: int = 100
+) -> UserProfile:
 
-    return [
-        lesson
-        for lesson in LESSONS
-        if lesson["language"] == language
-    ]
+    if not challenge.completed:
+        challenge.completed = True
+        challenge.completed_at = datetime.utcnow().isoformat()
+
+        if challenge.challenge_id not in user.completed_challenges:
+            user.completed_challenges.append(challenge.challenge_id)
+
+        add_xp(user, xp_reward)
+
+    return user
 
 
-def get_next_lesson(lesson_id: str) -> Optional[dict]:
-    current = get_lesson_by_id(lesson_id)
+def update_streak(user: UserProfile) -> UserProfile:
+    today = date.today().isoformat()
 
-    if current is None:
-        return None
+    if user.last_active_date == today:
+        return user
 
-    language_lessons = get_lessons_by_language(
-        current["language"]
-    )
+    if user.last_active_date is None:
+        user.streak_days = 1
 
-    for lesson in language_lessons:
-        if lesson["order"] == current["order"] + 1:
-            return lesson
+    else:
+        previous = date.fromisoformat(user.last_active_date)
+        difference = (date.today() - previous).days
 
-    return None
+        if difference == 1:
+            user.streak_days += 1
+        else:
+            user.streak_days = 1
+
+    user.last_active_date = today
+
+    return user
