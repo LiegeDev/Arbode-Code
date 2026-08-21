@@ -3,8 +3,14 @@ from pathlib import Path
 import sqlite3
 
 from fastapi import FastAPI, HTTPException
-from fastapimiddlewarecors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from lessons import (
+    get_all_lessons,
+    get_lesson_by_id,
+    get_lessons_by_language
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "arbode.db"
@@ -133,7 +139,11 @@ async def create_user(user: UserCreate):
         user_id = cursor.lastrowid
 
         row = connection.execute(
-            "SELECT * FROM users WHERE id = ?",
+            """
+            SELECT *
+            FROM users
+            WHERE id = ?
+            """,
             (user_id,)
         ).fetchone()
 
@@ -154,7 +164,11 @@ async def get_user(user_id: int):
     connection = get_connection()
 
     row = connection.execute(
-        "SELECT * FROM users WHERE id = ?",
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?
+        """,
         (user_id,)
     ).fetchone()
 
@@ -174,17 +188,24 @@ async def update_user(
     user_id: int,
     xp: int | None = None,
     level: int | None = None,
-    streak_days: int | None = None
+    streak_days: int | None = None,
+    orbs: int | None = None,
+    gems: int | None = None
 ):
     connection = get_connection()
 
     row = connection.execute(
-        "SELECT * FROM users WHERE id = ?",
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?
+        """,
         (user_id,)
     ).fetchone()
 
     if row is None:
         connection.close()
+
         raise HTTPException(
             status_code=404,
             detail="User not found."
@@ -192,10 +213,23 @@ async def update_user(
 
     current_xp = row["xp"] if xp is None else max(0, xp)
     current_level = row["level"] if level is None else max(1, level)
+
     current_streak = (
         row["streak_days"]
         if streak_days is None
         else max(0, streak_days)
+    )
+
+    current_orbs = (
+        row["orbs"]
+        if orbs is None
+        else max(0, orbs)
+    )
+
+    current_gems = (
+        row["gems"]
+        if gems is None
+        else max(0, gems)
     )
 
     connection.execute(
@@ -203,13 +237,17 @@ async def update_user(
         UPDATE users
         SET xp = ?,
             level = ?,
-            streak_days = ?
+            streak_days = ?,
+            orbs = ?,
+            gems = ?
         WHERE id = ?
         """,
         (
             current_xp,
             current_level,
             current_streak,
+            current_orbs,
+            current_gems,
             user_id
         )
     )
@@ -217,7 +255,11 @@ async def update_user(
     connection.commit()
 
     updated = connection.execute(
-        "SELECT * FROM users WHERE id = ?",
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?
+        """,
         (user_id,)
     ).fetchone()
 
@@ -226,20 +268,66 @@ async def update_user(
     return dict(updated)
 
 
+@app.get("/api/lessons")
+async def get_lessons(language: str | None = None):
+    if language:
+        lessons = get_lessons_by_language(language)
+
+        if not lessons:
+            raise HTTPException(
+                status_code=404,
+                detail="No lessons found for this language."
+            )
+
+        return {
+            "lessons": lessons
+        }
+
+    return {
+        "lessons": get_all_lessons()
+    }
+
+
+@app.get("/api/lessons/{lesson_id}")
+async def get_lesson(lesson_id: str):
+    lesson = get_lesson_by_id(lesson_id)
+
+    if lesson is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lesson not found."
+        )
+
+    return lesson
+
+
 @app.post("/api/users/{user_id}/lessons/{lesson_id}/complete")
 async def complete_lesson(
     user_id: int,
     lesson_id: str
 ):
+    lesson = get_lesson_by_id(lesson_id)
+
+    if lesson is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lesson not found."
+        )
+
     connection = get_connection()
 
     user = connection.execute(
-        "SELECT * FROM users WHERE id = ?",
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?
+        """,
         (user_id,)
     ).fetchone()
 
     if user is None:
         connection.close()
+
         raise HTTPException(
             status_code=404,
             detail="User not found."
@@ -247,8 +335,10 @@ async def complete_lesson(
 
     existing = connection.execute(
         """
-        SELECT * FROM lesson_progress
-        WHERE user_id = ? AND lesson_id = ?
+        SELECT *
+        FROM lesson_progress
+        WHERE user_id = ?
+        AND lesson_id = ?
         """,
         (user_id, lesson_id)
     ).fetchone()
@@ -274,26 +364,37 @@ async def complete_lesson(
             )
             VALUES (?, ?, 1, ?)
             """,
-            (user_id, lesson_id, now)
+            (
+                user_id,
+                lesson_id,
+                now
+            )
         )
+
     else:
         connection.execute(
             """
             UPDATE lesson_progress
             SET completed = 1,
                 completed_at = ?
-            WHERE user_id = ? AND lesson_id = ?
+            WHERE user_id = ?
+            AND lesson_id = ?
             """,
-            (now, user_id, lesson_id)
+            (
+                now,
+                user_id,
+                lesson_id
+            )
         )
 
-    reward_orbs = 50
-    reward_xp = 100
+    reward_orbs = lesson["orb_reward"]
+    reward_xp = lesson["xp_reward"]
 
     new_xp = user["xp"] + reward_xp
     new_orbs = user["orbs"] + reward_orbs
 
     xp_per_level = 1000
+
     new_level = max(
         1,
         (new_xp // xp_per_level) + 1
@@ -328,5 +429,4 @@ async def complete_lesson(
         "new_xp": new_xp,
         "new_level": new_level,
         "new_orbs": new_orbs
-    }
     }
